@@ -1,0 +1,20 @@
+status: draft
+
+inclusion:
+  - Addresses drug or medicine shortages, pharmaceutical availability, or a directly relevant pharmaceutical supply disruption.
+  - Contains evidence about information flows, digital capabilities, interorganizational coordination, governance, processes, or architecture.
+  - Provides empirical evidence, an evaluated model, a systematic synthesis, or a clearly specified conceptual mechanism.
+  - Full text is obtainable for full-text assessment.
+
+exclusion_reason_codes:
+  E01: Not about medicines or pharmaceutical supply.
+  E02: Mentions shortage only as background; no relevant mechanism or evidence.
+  E03: No information-system, data, process, coordination, governance, or architecture relevance.
+  E04: Editorial, news item, abstract-only record, or other document without usable evidence.
+  E05: Duplicate report of the same study without additional evidence.
+  E06: Full text unavailable after documented retrieval attempts.
+  E07: Outside the protocol language or date limits.
+
+quality_note: >-
+  Journal quartile is descriptive metadata, not an automatic exclusion criterion.
+  Methodological quality is assessed at study level after full-text inclusion.

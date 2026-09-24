@@ -1,0 +1,39 @@
+status: draft
+
+concepts:
+  phenomenon:
+    - drug shortage
+    - drug shortages
+    - medicine shortage
+    - medicine shortages
+    - medication shortage
+    - pharmaceutical shortage
+    - stock-out
+    - supply disruption
+
+  information_capability:
+    - information sharing
+    - interoperability
+    - data integration
+    - early warning
+    - monitoring system
+    - supply chain visibility
+    - data governance
+    - digital platform
+
+  architecture_and_coordination:
+    - enterprise architecture
+    - information architecture
+    - interorganizational information system
+    - federated architecture
+    - process integration
+    - coordination mechanism
+    - digital governance
+
+search_streams:
+  - id: S1_SHORTAGE_INFORMATION
+    combines: [phenomenon, information_capability]
+  - id: S2_SHORTAGE_ARCHITECTURE
+    combines: [phenomenon, architecture_and_coordination]
+  - id: S3_PHARMA_IS_BRIDGE
+    note: Pharmaceutical supply-chain terms combined with both IS concept families.

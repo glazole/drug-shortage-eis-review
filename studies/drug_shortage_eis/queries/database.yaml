@@ -1,0 +1,72 @@
+status: draft_for_pilot_validation
+notes:
+  - These queries must be peer-reviewed and recall-tested against the legacy included set.
+  - Source syntax is explicit; queries are not assumed to be mechanically interchangeable.
+
+queries:
+  - id: S1_SHORTAGE_INFORMATION
+    sources:
+      pubmed: >-
+        ("Drug Shortages"[Mesh] OR "drug shortage"[Title/Abstract] OR
+        "medicine shortage"[Title/Abstract] OR "medication shortage"[Title/Abstract])
+        AND ("information sharing"[Title/Abstract] OR interoperability[Title/Abstract] OR
+        "data integration"[Title/Abstract] OR "early warning"[Title/Abstract] OR
+        monitoring[Title/Abstract] OR visibility[Title/Abstract] OR
+        "data governance"[Title/Abstract] OR "digital platform"[Title/Abstract])
+      openalex: >-
+        drug medicine medication shortage information sharing interoperability data integration
+        early warning monitoring visibility data governance digital platform
+      crossref: >-
+        drug medicine medication shortage information sharing interoperability data integration
+        early warning monitoring visibility data governance digital platform
+      scopus: >-
+        TITLE-ABS-KEY(("drug shortage*" OR "medicine shortage*" OR "medication shortage*")
+        AND ("information sharing" OR interoperab* OR "data integration" OR "early warning"
+        OR monitoring OR visibility OR "data governance" OR "digital platform*"))
+      semantic_scholar: >-
+        drug medicine medication shortage information sharing interoperability data integration
+        early warning monitoring visibility data governance digital platform
+
+  - id: S2_SHORTAGE_ARCHITECTURE
+    sources:
+      pubmed: >-
+        ("drug shortage"[Title/Abstract] OR "medicine shortage"[Title/Abstract] OR
+        "medication shortage"[Title/Abstract]) AND ("enterprise architecture"[Title/Abstract]
+        OR "information architecture"[Title/Abstract] OR "information system"[Title/Abstract]
+        OR "process integration"[Title/Abstract] OR coordination[Title/Abstract]
+        OR governance[Title/Abstract])
+      openalex: >-
+        drug medicine medication shortage enterprise information architecture information system
+        process integration coordination governance
+      crossref: >-
+        drug medicine medication shortage enterprise information architecture information system
+        process integration coordination governance
+      scopus: >-
+        TITLE-ABS-KEY(("drug shortage*" OR "medicine shortage*" OR "medication shortage*")
+        AND ("enterprise architecture" OR "information architecture" OR
+        "interorganizational information system*" OR "process integration" OR coordination
+        OR governance))
+      semantic_scholar: >-
+        drug medicine medication shortage enterprise information architecture information system
+        process integration coordination governance
+
+  - id: S3_PHARMA_IS_BRIDGE
+    sources:
+      pubmed: >-
+        (pharmaceutical[Title/Abstract] AND "supply chain"[Title/Abstract]) AND
+        ("information system"[Title/Abstract] OR interoperability[Title/Abstract] OR
+        "data integration"[Title/Abstract] OR "enterprise architecture"[Title/Abstract] OR
+        "digital platform"[Title/Abstract])
+      openalex: >-
+        pharmaceutical supply chain information system interoperability data integration
+        enterprise architecture digital platform
+      crossref: >-
+        pharmaceutical supply chain information system interoperability data integration
+        enterprise architecture digital platform
+      scopus: >-
+        TITLE-ABS-KEY(pharmaceutical AND "supply chain" AND ("information system*"
+        OR interoperab* OR "data integration" OR "enterprise architecture"
+        OR "digital platform*"))
+      semantic_scholar: >-
+        pharmaceutical supply chain information system interoperability data integration
+        enterprise architecture digital platform

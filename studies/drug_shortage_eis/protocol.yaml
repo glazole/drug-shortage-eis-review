@@ -1,0 +1,77 @@
+study_id: drug_shortage_eis
+protocol_status: draft
+contact_email_env: RESEARCH_CONTACT_EMAIL
+
+date_range:
+  min_year: 2010
+  max_year: 2026
+
+sources:
+  pubmed:
+    enabled: true
+    required: true
+    api_key_env: NCBI_API_KEY
+    timeout_seconds: 30
+    max_retries: 2
+    backoff_seconds: 1
+
+  openalex:
+    enabled: true
+    required: false
+    api_key_env: OPENALEX_API_KEY
+    timeout_seconds: 30
+    max_retries: 2
+    backoff_seconds: 1
+    options:
+      min_date: 2010-01-01
+      max_date: 2026-12-31
+
+  crossref:
+    enabled: true
+    required: false
+    timeout_seconds: 30
+    max_retries: 2
+    backoff_seconds: 1
+    options:
+      min_date: 2010-01-01
+      max_date: 2026-12-31
+
+  scopus:
+    enabled: false
+    required: false
+    api_key_env: ELSEVIER_API_KEY
+    timeout_seconds: 30
+    max_retries: 2
+
+  sciencedirect:
+    enabled: false
+    required: false
+    api_key_env: ELSEVIER_API_KEY
+    timeout_seconds: 30
+    max_retries: 2
+
+  semantic_scholar:
+    enabled: false
+    required: false
+    api_key_env: SEMANTIC_SCHOLAR_API_KEY
+    timeout_seconds: 30
+    max_retries: 2
+    backoff_seconds: 2
+    options:
+      year: 2010-2026
+
+snowballing:
+  enabled: true
+  strategies:
+    backward: true
+    forward: true
+    author: true
+  graph_sources:
+    - openalex
+    - semantic_scholar
+  max_iterations: 2
+  stop_when_iteration_yields_no_included_works: true
+  author_expansion:
+    max_iterations: 1
+    require_stable_author_identifier: true
+    max_works_per_author: 100
