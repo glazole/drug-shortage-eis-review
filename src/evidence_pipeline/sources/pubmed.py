@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from typing import Any
+from urllib.parse import urlencode
 
 from ..models import WorkRecord
 from ..normalization import normalize_doi
@@ -88,6 +89,7 @@ class PubMedAdapter(SourceAdapter):
         return records
 
     def search(self, query: str, *, limit: int) -> list[WorkRecord]:
+        self.last_search_total = None
         ids: list[str] = []
         page_size = min(500, max(1, limit))
         retstart = 0
@@ -117,6 +119,7 @@ class PubMedAdapter(SourceAdapter):
             batch = result.get("idlist") or []
             ids.extend(str(value) for value in batch)
             total = int(result.get("count") or 0)
+            self.last_search_total = total
             retstart += len(batch)
             if not batch or retstart >= total:
                 break
@@ -140,3 +143,28 @@ class PubMedAdapter(SourceAdapter):
                 )
             )
         return records[:limit]
+
+    def doi_lookup_url(self, doi: str) -> str:
+        return f"{self.base_url}/esearch.fcgi?" + urlencode({"db": "pubmed", "term": f'"{doi}"[AID]'})
+
+    def lookup_doi(self, doi: str) -> WorkRecord | None:
+        # Exact identifier search; retrieval date/language filters do not belong here.
+        params: dict[str, Any] = {
+            "db": "pubmed", "term": f'"{doi}"[AID]', "retmode": "json", "retmax": 5,
+            "tool": "drug_shortage_eis_review", "email": self.contact_email,
+        }
+        if self.config.api_key:
+            params["api_key"] = self.config.api_key
+        result = self.get_json(f"{self.base_url}/esearch.fcgi", params=params)
+        ids = (result.get("esearchresult") or {}).get("idlist") or []
+        if not ids:
+            return None
+        self.sleep(0.11 if self.config.api_key else 0.34)
+        params = {
+            "db": "pubmed", "id": ",".join(str(value) for value in ids), "retmode": "xml",
+            "tool": "drug_shortage_eis_review", "email": self.contact_email,
+        }
+        if self.config.api_key:
+            params["api_key"] = self.config.api_key
+        records = self._parse_articles(self.get_text(f"{self.base_url}/efetch.fcgi", params=params))
+        return next((r for r in records if normalize_doi(r.doi) == normalize_doi(doi)), None)

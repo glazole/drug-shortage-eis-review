@@ -1,0 +1,94 @@
+# Pilot heuristics; validate recall against known relevant papers before a full review.
+# Sources with native Boolean queries retain candidates for manual screening.
+# These additions cover data fusion and shortage-of formulations; the thematic
+# groups remain mandatory. Any single query passing advances the work.
+sources:
+- crossref
+- openalex
+- semantic_scholar
+queries:
+  S1_SHORTAGE_INFORMATION:
+    shortage: &id001
+    - drug shortage
+    - drug shortages
+    - medicine shortage
+    - medicine shortages
+    - medication shortage
+    - medication shortages
+    - pharmaceutical shortage
+    - pharmaceutical shortages
+    - shortage of drugs
+    - shortages of drugs
+    - shortage of medicines
+    - shortages of medicines
+    - shortage of medications
+    - shortages of medications
+    - shortage of pharmaceuticals
+    - shortages of pharmaceuticals
+    - shortage of essential drugs
+    - shortages of essential drugs
+    - shortage of essential medicines
+    - shortages of essential medicines
+    - shortage of essential medications
+    - shortages of essential medications
+    information:
+    - information sharing
+    - interoperability
+    - interoperable
+    - data integration
+    - early warning
+    - monitoring
+    - visibility
+    - data governance
+    - digital platform
+    - digital platforms
+    - informatics
+    - data fusion
+    - information fusion
+    - shared information
+    - data transparency
+  S2_SHORTAGE_ARCHITECTURE:
+    shortage: *id001
+    architecture:
+    - enterprise architecture
+    - information architecture
+    - information system
+    - information systems
+    - process integration
+    - coordination
+    - governance
+    - system design
+    - informatics
+  S3_PHARMA_IS_BRIDGE:
+    pharma:
+    - pharmaceutical
+    - pharmaceuticals
+    - pharmacy
+    - pharmacies
+    - medicine
+    - medicines
+    - medication
+    - medications
+    - drug
+    - drugs
+    supply_chain:
+    - supply chain
+    - supply chains
+    - drug supply
+    - medicine supply
+    - pharmaceutical logistics
+    information:
+    - information system
+    - information systems
+    - interoperability
+    - interoperable
+    - data integration
+    - enterprise architecture
+    - information architecture
+    - digital platform
+    - digital platforms
+    - informatics
+    - data fusion
+    - information fusion
+    - shared information
+    - data transparency

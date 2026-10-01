@@ -106,9 +106,8 @@ class DiscoveryRunner:
                     raise UnsupportedCapabilityError(
                         f"No adapter registered for {query.source_name}"
                     )
-                records = self._prepare_records(
-                    adapter.search(query.text, limit=limit_per_query)
-                )
+                raw_records = adapter.search(query.text, limit=limit_per_query)
+                records = self._prepare_records(raw_records)
                 for record in records:
                     discovered.append(
                         DiscoveredWork(
@@ -132,6 +131,13 @@ class DiscoveryRunner:
                         retrieved_count=len(records),
                         started_at=started_at,
                         completed_at=_now(),
+                        requested_limit=limit_per_query,
+                        total_results=getattr(adapter, "last_search_total", None),
+                        possibly_truncated=(
+                            len(raw_records) >= limit_per_query
+                            and (getattr(adapter, "last_search_total", None) is None
+                                 or adapter.last_search_total > len(raw_records))
+                        ),
                     )
                 )
             except SourceUnavailableError as exc:

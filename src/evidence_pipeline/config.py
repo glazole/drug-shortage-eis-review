@@ -208,6 +208,14 @@ def load_study_config(study_dir: str | Path) -> StudyConfig:
                 f"Source {name!r} cannot be required while it is disabled"
             )
         options = dict(raw.get("options") or {})
+        if name == "scopus":
+            view = (_env_value("SCOPUS_SEARCH_VIEW") or options.get("view", "STANDARD")).upper()
+            if view not in {"STANDARD", "COMPLETE"}:
+                raise ConfigurationError("SCOPUS_SEARCH_VIEW must be STANDARD or COMPLETE")
+            options["view"] = view
+            options["insttoken_env"] = "ELSEVIER_INSTTOKEN"
+            if _env_value("SCOPUS_SEARCH_VIEW"):
+                overrides.append("SCOPUS_SEARCH_VIEW")
         options["min_date"] = f"{min_year:04d}-01-01"
         options["max_date"] = f"{max_year:04d}-12-31"
         options["year"] = f"{min_year}-{max_year}"

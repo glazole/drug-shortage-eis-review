@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 from ..models import WorkRecord
 from ..normalization import normalize_doi
@@ -45,6 +46,7 @@ class OpenAlexAdapter(SourceAdapter):
         )
 
     def search(self, query: str, *, limit: int) -> list[WorkRecord]:
+        self.last_search_total = None
         records: list[WorkRecord] = []
         cursor = "*"
         per_page = min(200, max(1, limit))
@@ -63,6 +65,7 @@ class OpenAlexAdapter(SourceAdapter):
             if self.config.api_key:
                 params["api_key"] = self.config.api_key
             data = self.get_json(f"{self.base_url}/works", params=params)
+            self.last_search_total = (data.get("meta") or {}).get("count")
             batch = data.get("results") or []
             records.extend(self._map_work(item) for item in batch if item.get("title"))
             next_cursor = (data.get("meta") or {}).get("next_cursor")
@@ -70,6 +73,15 @@ class OpenAlexAdapter(SourceAdapter):
                 break
             cursor = next_cursor
         return records[:limit]
+
+    def doi_lookup_url(self, doi: str) -> str:
+        return f"{self.base_url}/works/https://doi.org/{quote(doi, safe='')}"
+
+    def lookup_doi(self, doi: str) -> WorkRecord | None:
+        params: dict[str, Any] = {"mailto": self.contact_email}
+        if self.config.api_key:
+            params["api_key"] = self.config.api_key
+        return self._map_work(self.get_json(self.doi_lookup_url(doi), params=params))
 
     def backward(self, work_identifier: str, *, limit: int) -> list[WorkRecord]:
         work = self.get_json(f"{self.base_url}/works/{work_identifier}")
