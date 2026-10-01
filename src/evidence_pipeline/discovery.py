@@ -16,6 +16,7 @@ from .models import (
     SearchQuery,
     SourceRunReport,
     SourceStatus,
+    WorkRecord,
 )
 from .sources.base import SourceAdapter
 
@@ -29,9 +30,36 @@ class DiscoveryRunner:
         self,
         adapters: dict[str, SourceAdapter],
         source_configs: dict[str, SourceConfig],
+        *,
+        min_year: int | None = None,
+        max_year: int | None = None,
+        include_abstracts: bool = True,
     ) -> None:
         self.adapters = adapters
         self.source_configs = source_configs
+        self.min_year = min_year
+        self.max_year = max_year
+        self.include_abstracts = include_abstracts
+
+    def _prepare_records(self, records: Iterable[WorkRecord]) -> list[WorkRecord]:
+        prepared: list[WorkRecord] = []
+        for record in records:
+            if (
+                record.year is not None
+                and self.min_year is not None
+                and record.year < self.min_year
+            ):
+                continue
+            if (
+                record.year is not None
+                and self.max_year is not None
+                and record.year > self.max_year
+            ):
+                continue
+            if not self.include_abstracts:
+                record.abstract = None
+            prepared.append(record)
+        return prepared
 
     def _disabled_report(
         self,
@@ -78,7 +106,9 @@ class DiscoveryRunner:
                     raise UnsupportedCapabilityError(
                         f"No adapter registered for {query.source_name}"
                     )
-                records = adapter.search(query.text, limit=limit_per_query)
+                records = self._prepare_records(
+                    adapter.search(query.text, limit=limit_per_query)
+                )
                 for record in records:
                     discovered.append(
                         DiscoveredWork(
@@ -197,11 +227,17 @@ class DiscoveryRunner:
             started_at = _now()
             try:
                 if method == DiscoveryMethod.BACKWARD:
-                    records = adapter.backward(source_identifier, limit=limit_per_seed)
+                    records = self._prepare_records(
+                        adapter.backward(source_identifier, limit=limit_per_seed)
+                    )
                 elif method == DiscoveryMethod.FORWARD:
-                    records = adapter.forward(source_identifier, limit=limit_per_seed)
+                    records = self._prepare_records(
+                        adapter.forward(source_identifier, limit=limit_per_seed)
+                    )
                 else:
-                    records = adapter.author_works(source_identifier, limit=limit_per_seed)
+                    records = self._prepare_records(
+                        adapter.author_works(source_identifier, limit=limit_per_seed)
+                    )
                 for record in records:
                     discovered.append(
                         DiscoveredWork(

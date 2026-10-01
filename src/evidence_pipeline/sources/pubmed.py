@@ -22,7 +22,12 @@ class PubMedAdapter(SourceAdapter):
         return re.sub(r"\s+", " ", value) or None
 
     @classmethod
-    def _parse_articles(cls, xml_text: str) -> list[WorkRecord]:
+    def _parse_articles(
+        cls,
+        xml_text: str,
+        *,
+        include_abstracts: bool = True,
+    ) -> list[WorkRecord]:
         root = ET.fromstring(xml_text)
         records: list[WorkRecord] = []
         for node in root.findall(".//PubmedArticle"):
@@ -34,13 +39,23 @@ class PubMedAdapter(SourceAdapter):
             if not title:
                 continue
             pmid = cls._text(citation.find("PMID"))
-            abstract_parts = [cls._text(value) for value in article.findall(".//Abstract/AbstractText")]
-            abstract = " ".join(value for value in abstract_parts if value) or None
+            abstract = None
+            if include_abstracts:
+                abstract_parts = [
+                    cls._text(value) for value in article.findall(".//Abstract/AbstractText")
+                ]
+                abstract = " ".join(value for value in abstract_parts if value) or None
             authors: list[str] = []
             for author in article.findall(".//AuthorList/Author"):
                 collective = cls._text(author.find("CollectiveName"))
                 name = " ".join(
-                    filter(None, [cls._text(author.find("ForeName")), cls._text(author.find("LastName"))])
+                    filter(
+                        None,
+                        [
+                            cls._text(author.find("ForeName")),
+                            cls._text(author.find("LastName")),
+                        ],
+                    )
                 )
                 if collective or name:
                     authors.append(collective or name)
@@ -76,6 +91,12 @@ class PubMedAdapter(SourceAdapter):
         ids: list[str] = []
         page_size = min(500, max(1, limit))
         retstart = 0
+        min_date = str(self.config.options.get("min_date", "2010-01-01")).replace(
+            "-", "/"
+        )
+        max_date = str(self.config.options.get("max_date", "2026-12-31")).replace(
+            "-", "/"
+        )
         while len(ids) < limit:
             params: dict[str, Any] = {
                 "db": "pubmed",
@@ -83,6 +104,9 @@ class PubMedAdapter(SourceAdapter):
                 "retmode": "json",
                 "retstart": retstart,
                 "retmax": min(page_size, limit - len(ids)),
+                "datetype": "pdat",
+                "mindate": min_date,
+                "maxdate": max_date,
                 "tool": "drug_shortage_eis_review",
                 "email": self.contact_email,
             }
@@ -109,5 +133,10 @@ class PubMedAdapter(SourceAdapter):
             if self.config.api_key:
                 params["api_key"] = self.config.api_key
             xml_text = self.get_text(f"{self.base_url}/efetch.fcgi", params=params)
-            records.extend(self._parse_articles(xml_text))
+            records.extend(
+                self._parse_articles(
+                    xml_text,
+                    include_abstracts=self.config.include_abstracts,
+                )
+            )
         return records[:limit]

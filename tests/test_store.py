@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 from evidence_pipeline.models import (
@@ -53,6 +54,36 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
             with store.connect() as connection:
                 abstract = connection.execute("SELECT abstract FROM works").fetchone()[0]
                 self.assertIn("substantially longer", abstract)
+
+    def test_search_run_preserves_effective_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SQLiteEvidenceStore(Path(temp_dir) / "review.sqlite3")
+            store.initialize()
+            config = {
+                "search_language": "en",
+                "include_abstracts": False,
+                "env_overrides": ["EVIDENCE_INCLUDE_ABSTRACTS"],
+            }
+
+            store.start_search_run(
+                run_id="run-config",
+                study_id="drug_shortage_eis",
+                profile_id="baseline",
+                effective_config=config,
+            )
+            store.complete_search_run("run-config", status="completed")
+
+            with store.connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM search_runs WHERE run_id = ?",
+                    ("run-config",),
+                ).fetchone()
+
+        self.assertEqual(row["status"], "completed")
+        self.assertEqual(row["study_id"], "drug_shortage_eis")
+        self.assertEqual(row["profile_id"], "baseline")
+        self.assertEqual(json.loads(row["effective_config_json"]), config)
+        self.assertIsNotNone(row["completed_at"])
 
 
 if __name__ == "__main__":

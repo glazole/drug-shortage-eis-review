@@ -12,9 +12,15 @@ from .base import SourceAdapter
 
 class SemanticScholarAdapter(SourceAdapter):
     base_url = "https://api.semanticscholar.org/graph/v1"
-    paper_fields = (
-        "paperId,externalIds,title,abstract,year,authors,venue,url,citationCount,publicationTypes"
+    base_paper_fields = (
+        "paperId,externalIds,title,year,authors,venue,url,citationCount,publicationTypes"
     )
+
+    @property
+    def paper_fields(self) -> str:
+        if self.config.include_abstracts:
+            return f"{self.base_paper_fields},abstract"
+        return self.base_paper_fields
 
     @property
     def default_headers(self) -> dict[str, str]:

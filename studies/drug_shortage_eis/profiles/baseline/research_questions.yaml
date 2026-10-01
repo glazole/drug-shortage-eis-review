@@ -1,0 +1,20 @@
+status: draft_for_pilot_validation
+
+questions:
+  - id: RQ1
+    text: >-
+      What information capabilities and interorganizational data-sharing mechanisms are reported
+      for detecting, explaining, preventing, or mitigating drug shortages?
+    purpose: Identify the information-system capabilities evidenced in the literature.
+
+  - id: RQ2
+    text: >-
+      How are these capabilities organized across actors, processes, data, applications, and
+      governance arrangements in pharmaceutical supply networks?
+    purpose: Connect shortage-management evidence to an enterprise information-systems view.
+
+  - id: RQ3
+    text: >-
+      What design requirements and architectural principles can be derived for an enterprise
+      information system supporting coordinated drug-shortage management?
+    purpose: Produce requirements for the Design Science artifact and its evaluation.

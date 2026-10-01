@@ -6,8 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import load_database_queries, load_study_config
+from .config import load_database_queries, load_profile_documents, load_study_config
 from .discovery import DiscoveryRunner
+from .exceptions import ConfigurationError
 from .sources import build_source_registry
 from .storage import SQLiteEvidenceStore
 
@@ -22,13 +23,22 @@ def describe_study(study_dir: str | Path) -> dict[str, Any]:
     """Load and summarize the protocol without exposing API-key values."""
 
     study = load_study_config(study_dir)
-    queries = load_database_queries(study_dir)
+    queries = load_database_queries(study_dir, language=study.search_language)
+    if not queries:
+        raise ConfigurationError(
+            f"Profile {study.study_id}/{study.profile_id} has no queries "
+            f"for language {study.search_language!r}"
+        )
+    documents = load_profile_documents(study_dir)
     return {
         "study_id": study.study_id,
+        "profile_id": study.profile_id,
         "date_range": {
             "min_year": study.min_year,
             "max_year": study.max_year,
         },
+        "search_language": study.search_language,
+        "include_abstracts": study.include_abstracts,
         "sources": {
             name: {
                 "enabled": config.enabled,
@@ -38,6 +48,8 @@ def describe_study(study_dir: str | Path) -> dict[str, Any]:
             for name, config in study.sources.items()
         },
         "query_variants": len(queries),
+        "env_overrides": list(study.env_overrides),
+        **documents,
     }
 
 
@@ -59,22 +71,58 @@ def run_database_search(
     """Execute configured database searches and persist records and provenance."""
 
     study = load_study_config(study_dir)
-    queries = load_database_queries(study_dir)
+    queries = load_database_queries(study_dir, language=study.search_language)
+    if not queries:
+        raise ConfigurationError(
+            f"Profile {study.study_id}/{study.profile_id} has no queries "
+            f"for language {study.search_language!r}"
+        )
     store = SQLiteEvidenceStore(database_path)
     store.initialize()
 
     registry = build_source_registry(study)
-    runner = DiscoveryRunner(registry, study.sources)
-    effective_run_id = run_id or create_run_id()
-    discovered, reports = runner.search(
-        run_id=effective_run_id,
-        queries=queries,
-        limit_per_query=limit_per_query,
+    runner = DiscoveryRunner(
+        registry,
+        study.sources,
+        min_year=study.min_year,
+        max_year=study.max_year,
+        include_abstracts=study.include_abstracts,
     )
-    unique_works, discoveries = store.ingest(discovered)
-    store.write_source_reports(reports)
+    effective_run_id = run_id or create_run_id()
+    store.start_search_run(
+        run_id=effective_run_id,
+        study_id=study.study_id,
+        profile_id=study.profile_id,
+        effective_config={
+            "date_range": {"min_year": study.min_year, "max_year": study.max_year},
+            "search_language": study.search_language,
+            "include_abstracts": study.include_abstracts,
+            "sources": {
+                name: {"enabled": config.enabled, "required": config.required}
+                for name, config in study.sources.items()
+            },
+            "env_overrides": list(study.env_overrides),
+        },
+    )
+    try:
+        discovered, reports = runner.search(
+            run_id=effective_run_id,
+            queries=queries,
+            limit_per_query=limit_per_query,
+        )
+        unique_works, discoveries = store.ingest(discovered)
+        store.write_source_reports(reports)
+    except Exception:
+        store.complete_search_run(effective_run_id, status="failed")
+        raise
+    store.complete_search_run(effective_run_id, status="completed")
     return {
         "run_id": effective_run_id,
+        "study_id": study.study_id,
+        "profile_id": study.profile_id,
+        "search_language": study.search_language,
+        "include_abstracts": study.include_abstracts,
+        "date_range": {"min_year": study.min_year, "max_year": study.max_year},
         "retrieved_records": len(discovered),
         "unique_works_in_batch": unique_works,
         "new_discovery_events": discoveries,

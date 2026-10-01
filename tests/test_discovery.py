@@ -73,6 +73,33 @@ class DiscoveryRunnerTests(unittest.TestCase):
                 limit_per_query=10,
             )
 
+    def test_effective_date_range_and_abstract_setting_are_applied(self) -> None:
+        config = SourceConfig(name="pubmed")
+        adapter = FakeAdapter(
+            config,
+            [
+                WorkRecord(title="Too old", year=2009, abstract="old"),
+                WorkRecord(title="In range", year=2020, abstract="remove me"),
+            ],
+        )
+        runner = DiscoveryRunner(
+            {config.name: adapter},
+            {config.name: config},
+            min_year=2010,
+            max_year=2026,
+            include_abstracts=False,
+        )
+
+        records, reports = runner.search(
+            run_id="run-filter",
+            queries=[SearchQuery("Q1", config.name, "drug shortage")],
+            limit_per_query=10,
+        )
+
+        self.assertEqual([item.record.title for item in records], ["In range"])
+        self.assertIsNone(records[0].record.abstract)
+        self.assertEqual(reports[0].retrieved_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

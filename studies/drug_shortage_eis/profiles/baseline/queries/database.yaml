@@ -5,6 +5,7 @@ notes:
 
 queries:
   - id: S1_SHORTAGE_INFORMATION
+    language: en
     sources:
       pubmed: >-
         ("Drug Shortages"[Mesh] OR "drug shortage"[Title/Abstract] OR
@@ -28,6 +29,7 @@ queries:
         early warning monitoring visibility data governance digital platform
 
   - id: S2_SHORTAGE_ARCHITECTURE
+    language: en
     sources:
       pubmed: >-
         ("drug shortage"[Title/Abstract] OR "medicine shortage"[Title/Abstract] OR
@@ -51,6 +53,7 @@ queries:
         process integration coordination governance
 
   - id: S3_PHARMA_IS_BRIDGE
+    language: en
     sources:
       pubmed: >-
         (pharmaceutical[Title/Abstract] AND "supply chain"[Title/Abstract]) AND

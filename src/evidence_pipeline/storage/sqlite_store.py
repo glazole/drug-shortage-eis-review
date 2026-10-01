@@ -35,6 +35,16 @@ ON works(doi) WHERE doi IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_works_title_year
 ON works(normalized_title, publication_year);
 
+CREATE TABLE IF NOT EXISTS search_runs (
+    run_id TEXT PRIMARY KEY,
+    study_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    effective_config_json TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS discoveries (
     discovery_id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL,
@@ -90,6 +100,42 @@ class SQLiteEvidenceStore:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+
+    def start_search_run(
+        self,
+        *,
+        run_id: str,
+        study_id: str,
+        profile_id: str,
+        effective_config: dict,
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO search_runs(
+                    run_id, study_id, profile_id, status,
+                    effective_config_json, started_at, completed_at
+                ) VALUES (?, ?, ?, 'running', ?, ?, NULL)
+                """,
+                (
+                    run_id,
+                    study_id,
+                    profile_id,
+                    json.dumps(effective_config, ensure_ascii=False, sort_keys=True),
+                    utc_now_iso(),
+                ),
+            )
+
+    def complete_search_run(self, run_id: str, *, status: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE search_runs
+                   SET status = ?, completed_at = ?
+                 WHERE run_id = ?
+                """,
+                (status, utc_now_iso(), run_id),
+            )
 
     @staticmethod
     def _find_existing(connection: sqlite3.Connection, record: WorkRecord) -> sqlite3.Row | None:
@@ -245,4 +291,5 @@ class SQLiteEvidenceStore:
                     "SELECT COUNT(*) FROM discoveries"
                 ).fetchone()[0],
                 "source_runs": connection.execute("SELECT COUNT(*) FROM source_runs").fetchone()[0],
+                "search_runs": connection.execute("SELECT COUNT(*) FROM search_runs").fetchone()[0],
             }
