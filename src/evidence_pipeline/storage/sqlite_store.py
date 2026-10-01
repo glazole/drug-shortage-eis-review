@@ -83,6 +83,19 @@ CREATE TABLE IF NOT EXISTS screening_decisions (
     decided_at TEXT NOT NULL,
     UNIQUE(work_id, stage, reviewer_id)
 );
+
+CREATE TABLE IF NOT EXISTS automatic_relevance (
+    run_id TEXT NOT NULL REFERENCES search_runs(run_id),
+    work_id TEXT NOT NULL REFERENCES works(work_id),
+    query_id TEXT NOT NULL,
+    rule_version TEXT NOT NULL,
+    study_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    details_json TEXT NOT NULL,
+    assessed_at TEXT NOT NULL,
+    PRIMARY KEY(run_id, work_id, query_id, rule_version)
+);
 """
 
 

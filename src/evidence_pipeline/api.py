@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field
 from .config import IDENTIFIER_PATTERN, list_study_profiles, resolve_profile_path
 from .exceptions import ConfigurationError, EvidencePipelineError, SourceUnavailableError
 from .service import describe_study, initialize_database, run_database_search
+from .relevance import load_rules, screen_run
+from .storage import SQLiteEvidenceStore
 
 
 _search_lock = Lock()
@@ -97,6 +99,13 @@ class SearchResponse(BaseModel):
     new_discovery_events: int
     source_statuses: list[SourceStatusResult]
     ledger: LedgerSummary
+    automatic_relevance: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScreeningRequest(BaseModel):
+    study_id: str = Field(default_factory=_default_study_id, pattern=IDENTIFIER_PATTERN.pattern)
+    profile_id: str = Field(default_factory=_default_profile_id, pattern=IDENTIFIER_PATTERN.pattern)
+    run_id: str = Field(min_length=1, max_length=128)
 
 
 @asynccontextmanager
@@ -206,6 +215,21 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=str(exc),
             ) from exc
+        finally:
+            _search_lock.release()
+
+    @application.post("/v1/screening/automatic", tags=["ledger"])
+    def automatic_screening(request: ScreeningRequest) -> dict[str, Any]:
+        if not _search_lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="Another search or screening is running")
+        try:
+            profile = _resolve_profile(request.study_id, request.profile_id)
+            store = SQLiteEvidenceStore(_database_path())
+            store.initialize()
+            return screen_run(store, run_id=request.run_id, study_id=request.study_id,
+                              profile_id=request.profile_id, rules=load_rules(profile))
+        except ConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         finally:
             _search_lock.release()
 

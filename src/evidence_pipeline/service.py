@@ -10,6 +10,7 @@ from .config import load_database_queries, load_profile_documents, load_study_co
 from .discovery import DiscoveryRunner
 from .exceptions import ConfigurationError
 from .sources import build_source_registry
+from .relevance import load_rules, screen_run
 from .storage import SQLiteEvidenceStore
 
 
@@ -49,6 +50,7 @@ def describe_study(study_dir: str | Path) -> dict[str, Any]:
         },
         "query_variants": len(queries),
         "env_overrides": list(study.env_overrides),
+        "automatic_relevance": load_rules(study_dir),
         **documents,
     }
 
@@ -81,6 +83,7 @@ def run_database_search(
     store.initialize()
 
     registry = build_source_registry(study)
+    relevance_rules = load_rules(study_dir)
     runner = DiscoveryRunner(
         registry,
         study.sources,
@@ -98,10 +101,12 @@ def run_database_search(
             "search_language": study.search_language,
             "include_abstracts": study.include_abstracts,
             "sources": {
-                name: {"enabled": config.enabled, "required": config.required}
+                name: {"enabled": config.enabled, "required": config.required,
+                       "search_view": config.options.get("view")}
                 for name, config in study.sources.items()
             },
             "env_overrides": list(study.env_overrides),
+            "automatic_relevance": relevance_rules,
         },
     )
     try:
@@ -112,6 +117,8 @@ def run_database_search(
         )
         unique_works, discoveries = store.ingest(discovered)
         store.write_source_reports(reports)
+        relevance = screen_run(store, run_id=effective_run_id, study_id=study.study_id,
+                               profile_id=study.profile_id, rules=relevance_rules)
     except Exception:
         store.complete_search_run(effective_run_id, status="failed")
         raise
@@ -126,6 +133,7 @@ def run_database_search(
         "retrieved_records": len(discovered),
         "unique_works_in_batch": unique_works,
         "new_discovery_events": discoveries,
+        "automatic_relevance": relevance,
         "source_statuses": [
             {
                 "source": report.source_name,

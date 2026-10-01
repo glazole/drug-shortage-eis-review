@@ -70,6 +70,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()["research_questions"]["questions"]), 3)
 
+    def test_search_assesses_and_rescreens_existing_run(self) -> None:
+        from evidence_pipeline.models import DiscoveryEvent, DiscoveryMethod, DiscoveredWork, WorkRecord
+        records = [DiscoveredWork(
+            WorkRecord(title="Drug shortages monitoring", abstract="A study.", year=2026),
+            DiscoveryEvent("pilot", "crossref", DiscoveryMethod.DATABASE,
+                           query_id="S1_SHORTAGE_INFORMATION"),
+        )]
+        with patch("evidence_pipeline.service.DiscoveryRunner.search", return_value=(records, [])):
+            response = self.client.post("/v1/search", json={"run_id": "pilot", "limit_per_query": 20})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["automatic_relevance"]["include"], 1)
+        response = self.client.post("/v1/screening/automatic", json={"run_id": "pilot"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["works_assessed"], 1)
+        self.assertEqual(self.client.get("/v1/ledger/summary").json()["discoveries"], 1)
+        self.assertEqual(self.client.post("/v1/screening/automatic", json={"run_id": "missing"}).status_code, 422)
+
     def test_unknown_study_returns_not_found(self) -> None:
         response = self.client.get("/v1/studies/missing")
 

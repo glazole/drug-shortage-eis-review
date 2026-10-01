@@ -257,3 +257,120 @@ The first milestone provides:
 
 The next milestone will add reviewer-oriented screening import/export, explicit exclusion-reason
 codes, query recall tests against the legacy thesis corpus, and PRISMA 2020/PRISMA-S reporting.
+
+## Automatic relevance checks (pilot)
+
+The baseline profile now defines query-specific anchor groups in `relevance.yaml`.
+For Crossref, OpenAlex and Semantic Scholar, every group must match a whole word
+or phrase in the normalized title + abstract. Unicode, markup and hyphens are
+normalized; plural terms are explicit. PubMed and Scopus retain their native
+Boolean-query candidates for manual screening (`SOURCE_QUERY_ANCHORED`).
+
+All retrieved works and discovery events remain in the ledger. The new
+`automatic_relevance` table records each run/work/query assessment, rule hash,
+full rules, matched terms, missing anchors and the evidence used. New searches
+return an `automatic_relevance` summary. `include` means advance to manual
+screening, not final inclusion. If no abstract exists and the title does not
+satisfy all groups, the result is `review`, never automatic exclusion.
+
+A work advances if **any** query passes; otherwise it needs review if any query
+has insufficient evidence; only failure of all evaluated queries yields
+`exclude`. Run/profile-scoped system decisions are stored in
+`screening_decisions`; human decisions are preserved. Repeating assessment with
+unchanged rules updates the same assessment; changed rules get a new hash.
+Assessments use the currently merged work metadata, which may have been enriched
+by subsequent searches. Evidence snapshots make that input explicit.
+
+These are draft lexical heuristics. Validate recall against known relevant papers
+and manually audit exclusions before using counts in the final review. Filtering
+candidates does not repair recall lost through broad ranked API searches; do not
+increase the pilot limit or claim a complete corpus on this basis alone.
+
+### Update the service and assess the existing pilot
+
+After merging the changes:
+
+```bash
+cd ~/drug-shortage-eis-review
+git pull --ff-only
+docker compose up -d --build evidence-api
+```
+
+The existing `evidence-data` volume is reused; schema initialization adds a table.
+Use the exact `run_id` in your pilot JSON (or list runs with the command below):
+
+```bash
+docker compose exec -T evidence-api python - <<'PY'
+import sqlite3
+with sqlite3.connect('file:/app/data/review.sqlite3?mode=ro', uri=True) as con:
+    for row in con.execute('SELECT run_id, study_id, profile_id, status FROM search_runs ORDER BY started_at DESC'):
+        print(row)
+PY
+```
+
+```bash
+curl --fail-with-body -sS -X POST http://localhost:8000/v1/screening/automatic \
+  -H 'Content-Type: application/json' \
+  -d '{"study_id":"drug_shortage_eis","profile_id":"baseline","run_id":"REPLACE_WITH_YOUR_PILOT_RUN_ID"}' | jq
+```
+
+Inspect decisions and reasons without rerunning searches:
+
+```bash
+docker compose exec -T evidence-api python - <<'PY'
+import json
+import sqlite3
+with sqlite3.connect('file:/app/data/review.sqlite3?mode=ro', uri=True) as con:
+    for run_id, query, decision, title, details in con.execute('''
+        SELECT a.run_id, a.query_id, a.decision, w.title, a.details_json
+        FROM automatic_relevance a JOIN works w USING(work_id)
+        ORDER BY a.run_id, a.query_id, a.decision, w.title
+    '''):
+        evidence = json.loads(details)['evidence']
+        print(run_id, query, decision, title, evidence['reason_codes'], sep=' | ')
+PY
+```
+
+### Scopus access and search views
+
+The Scopus adapter previously always requested `COMPLETE`. It now defaults to
+`STANDARD`; set `SCOPUS_SEARCH_VIEW=COMPLETE` if your access supports that view.
+A COMPLETE request rejected with HTTP 403 retries that page once in STANDARD and
+uses STANDARD for subsequent pages. HTTP 401 and invalid-query errors do not
+trigger a view fallback. The configured year interval is sent via `date`.
+
+Add these settings to your existing `.env` (do not overwrite the file):
+
+```dotenv
+SCOPUS_SEARCH_VIEW=STANDARD
+ELSEVIER_INSTTOKEN=
+```
+
+Keep your existing `ELSEVIER_API_KEY`. The optional institutional token is sent
+as `X-ELS-Insttoken`; it must be issued for the associated API key. A STANDARD
+request can still fail without valid Scopus access, recognized institutional
+network or the appropriate token. The adapter reports actionable diagnostics for
+401/403 and rejects error payloads instead of treating them as zero results.
+ScienceDirect remains a separate adapter and access entitlement.
+
+Official references:
+- [Scopus Search API: views, institutional token, date](https://dev.elsevier.com/documentation/ScopusSearchAPI.wadl)
+- [Elsevier authentication](https://dev.elsevier.com/tecdoc_api_authentication.html)
+
+Test Scopus alone without altering the ledger or exposing keys:
+
+```bash
+docker compose exec -T evidence-api python - <<'PY'
+from evidence_pipeline.config import load_database_queries, load_study_config
+from evidence_pipeline.sources.elsevier import ScopusAdapter
+profile = '/app/studies/drug_shortage_eis/profiles/baseline'
+study = load_study_config(profile)
+query = next(q for q in load_database_queries(profile) if q.source_name == 'scopus')
+adapter = ScopusAdapter(study.sources['scopus'], contact_email=study.contact_email)
+for record in adapter.search(query.text, limit=5):
+    print(record.year, record.title, record.doi, sep=' | ')
+PY
+```
+
+This performs a small live API request. Automated tests use simulated responses;
+live entitlement verification must happen on the server with your credentials.

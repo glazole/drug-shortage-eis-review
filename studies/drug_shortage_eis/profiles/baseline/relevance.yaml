@@ -1,0 +1,14 @@
+# Pilot heuristics; validate recall against known relevant papers before a full review.
+# Other sources retain their native Boolean-query results for manual screening.
+sources: [crossref, openalex, semantic_scholar]
+queries:
+  S1_SHORTAGE_INFORMATION:
+    shortage: &shortage [drug shortage, drug shortages, medicine shortage, medicine shortages, medication shortage, medication shortages, pharmaceutical shortage, pharmaceutical shortages]
+    information: [information sharing, interoperability, interoperable, data integration, early warning, monitoring, visibility, data governance, digital platform, digital platforms, informatics]
+  S2_SHORTAGE_ARCHITECTURE:
+    shortage: *shortage
+    architecture: [enterprise architecture, information architecture, information system, information systems, process integration, coordination, governance, system design, informatics]
+  S3_PHARMA_IS_BRIDGE:
+    pharma: [pharmaceutical, pharmaceuticals, pharmacy, pharmacies, medicine, medicines, medication, medications, drug, drugs]
+    supply_chain: [supply chain, supply chains, drug supply, medicine supply, pharmaceutical logistics]
+    information: [information system, information systems, interoperability, interoperable, data integration, enterprise architecture, information architecture, digital platform, digital platforms, informatics]
