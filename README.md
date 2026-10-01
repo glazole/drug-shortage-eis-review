@@ -66,17 +66,70 @@ curl http://localhost:8000/v1/studies/drug_shortage_eis
 curl http://localhost:8000/v1/studies
 ```
 
-Start the configured database search:
+### Run a pilot search
+
+Start with a small pilot before requesting hundreds of records from every enabled source. The
+following command requests at most 20 records per source-specific query, assigns an explicit
+`run_id`, and saves the response under `artifacts/runs`:
 
 ```bash
-curl -X POST http://localhost:8000/v1/search \
-  -H 'Content-Type: application/json' \
-  -d '{"study_id":"drug_shortage_eis","profile_id":"baseline","limit_per_query":200}'
+cd ~/drug-shortage-eis-review
+
+mkdir -p artifacts/runs
+
+RUN_ID="baseline_pilot_$(date -u +%Y%m%dT%H%M%SZ)"
+
+curl --fail-with-body -sS \
+  -X POST http://localhost:8000/v1/search \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"study_id\": \"drug_shortage_eis\",
+    \"profile_id\": \"baseline\",
+    \"run_id\": \"${RUN_ID}\",
+    \"limit_per_query\": 20
+  }" \
+  | tee "artifacts/runs/${RUN_ID}.json"
 ```
 
-The initial API deliberately permits only one search at a time in a container. A concurrent search
-returns HTTP `409`, which prevents accidental duplicate retrieval and unnecessary pressure on
-external scholarly APIs. Long-running asynchronous jobs are outside this first API milestone.
+The request is synchronous: `curl` waits until all configured source queries complete or a required
+source aborts the run. Watch progress from another terminal:
+
+```bash
+docker compose logs -f evidence-api
+```
+
+After completion, inspect the ledger counters:
+
+```bash
+curl http://localhost:8000/v1/ledger/summary
+```
+
+For a full run, use another unique ID such as `baseline_full_<timestamp>` and increase
+`limit_per_query`, for example to `200`.
+
+### How often to run the same profile
+
+Technically, the same profile and settings can be run any number of times, but:
+
+- only one search may run at a time; a concurrent request receives HTTP `409`;
+- every run must have a unique `run_id`;
+- an existing `run_id`, including one belonging to a failed run, must not be reused;
+- external scholarly APIs have their own quotas and rate limits;
+- each run adds a `search_runs` record, source-run reports, and run-specific discovery events;
+- canonical publications in `works` are deduplicated across runs.
+
+Repeatedly running an unchanged profile after a complete successful run is normally unnecessary.
+A practical sequence is:
+
+1. `baseline_pilot_01`: retrieve 10–20 records per query and assess query behaviour.
+2. If the protocol changes, save it as another profile such as `pilot_v2` instead of overwriting
+   `baseline`.
+3. `baseline_full_01`: execute the frozen full search.
+4. Run again only to recover an unavailable source, evaluate a deliberately changed profile, or
+   update the search before publication.
+
+Pilot and final runs may share one SQLite ledger. Their provenance remains distinguishable by
+`run_id`, while duplicate works remain canonicalized in `works`.
 
 Operational commands:
 
