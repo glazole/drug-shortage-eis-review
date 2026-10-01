@@ -1,0 +1,168 @@
+"""FastAPI entrypoint for the evidence-search service."""
+
+from __future__ import annotations
+
+import os
+import re
+from contextlib import asynccontextmanager
+from pathlib import Path
+from threading import Lock
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel, Field
+
+from .exceptions import ConfigurationError, EvidencePipelineError, SourceUnavailableError
+from .service import describe_study, initialize_database, run_database_search
+
+
+STUDY_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+_search_lock = Lock()
+
+
+def _studies_root() -> Path:
+    return Path(os.getenv("EVIDENCE_STUDIES_ROOT", "studies")).resolve()
+
+
+def _database_path() -> Path:
+    return Path(os.getenv("EVIDENCE_DATABASE_PATH", "data/review.sqlite3")).resolve()
+
+
+def _default_study_id() -> str:
+    return os.getenv("EVIDENCE_DEFAULT_STUDY_ID", "drug_shortage_eis")
+
+
+def _resolve_study(study_id: str) -> Path:
+    if not STUDY_ID_PATTERN.fullmatch(study_id):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="study_id may contain only letters, digits, underscores, and hyphens",
+        )
+    study_path = (_studies_root() / study_id).resolve()
+    if not study_path.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Study not found: {study_id}",
+        )
+    return study_path
+
+
+class SearchRequest(BaseModel):
+    study_id: str = Field(default_factory=_default_study_id, pattern=STUDY_ID_PATTERN.pattern)
+    run_id: str | None = Field(default=None, min_length=1, max_length=128)
+    limit_per_query: int = Field(default=200, ge=1, le=1000)
+
+
+class LedgerSummary(BaseModel):
+    works: int
+    discoveries: int
+    source_runs: int
+
+
+class SourceStatusResult(BaseModel):
+    source: str
+    query_id: str | None
+    status: str
+    count: int
+    message: str | None
+
+
+class SearchResponse(BaseModel):
+    run_id: str
+    retrieved_records: int
+    unique_works_in_batch: int
+    new_discovery_events: int
+    source_statuses: list[SourceStatusResult]
+    ledger: LedgerSummary
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize_database(_database_path())
+    yield
+
+
+def create_app() -> FastAPI:
+    application = FastAPI(
+        title="Drug Shortage EIS Evidence API",
+        version="0.1.0",
+        description=(
+            "HTTP interface for protocol validation, evidence-ledger inspection, "
+            "and reproducible database searches."
+        ),
+        lifespan=lifespan,
+    )
+
+    @application.get("/", tags=["service"])
+    def root() -> dict[str, str]:
+        return {
+            "service": "drug-shortage-eis-evidence-api",
+            "docs": "/docs",
+            "health": "/health",
+        }
+
+    @application.get("/health", tags=["service"])
+    def health() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "ledger": initialize_database(_database_path()),
+        }
+
+    @application.get("/v1/studies/{study_id}", tags=["studies"])
+    def get_study(study_id: str) -> dict[str, Any]:
+        try:
+            return describe_study(_resolve_study(study_id))
+        except ConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+    @application.get(
+        "/v1/ledger/summary",
+        response_model=LedgerSummary,
+        tags=["ledger"],
+    )
+    def ledger_summary() -> dict[str, int]:
+        return initialize_database(_database_path())
+
+    @application.post(
+        "/v1/search",
+        response_model=SearchResponse,
+        tags=["search"],
+    )
+    def search(request: SearchRequest) -> dict[str, Any]:
+        if not _search_lock.acquire(blocking=False):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Another search is already running",
+            )
+        try:
+            return run_database_search(
+                study_dir=_resolve_study(request.study_id),
+                database_path=_database_path(),
+                limit_per_query=request.limit_per_query,
+                run_id=request.run_id,
+            )
+        except ConfigurationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        except SourceUnavailableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        except EvidencePipelineError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(exc),
+            ) from exc
+        finally:
+            _search_lock.release()
+
+    return application
+
+
+app = create_app()

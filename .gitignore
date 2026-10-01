@@ -12,4 +12,6 @@ build/
 data/raw/
 data/processed/
 data/review.sqlite3
+data/review.sqlite3-shm
+data/review.sqlite3-wal
 artifacts/

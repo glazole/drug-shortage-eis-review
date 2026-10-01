@@ -12,10 +12,17 @@ The new project separates:
 
 1. source adapters: API syntax, pagination, response parsing, retries;
 2. discovery strategies: database, backward, forward, and author expansion;
-3. canonicalization: DOI/title normalization and record merging;
-4. evidence ledger: every discovery path and source-run outcome;
-5. scientific review: title/abstract screening, full-text assessment, appraisal, extraction;
-6. reporting: PRISMA 2020, PRISMA-S, and citation-search reporting.
+3. application services: use cases shared by the CLI and HTTP transports;
+4. delivery interfaces: the command-line entrypoint and FastAPI application;
+5. canonicalization: DOI/title normalization and record merging;
+6. evidence ledger: every discovery path and source-run outcome;
+7. scientific review: title/abstract screening, full-text assessment, appraisal, extraction;
+8. reporting: PRISMA 2020, PRISMA-S, and citation-search reporting.
+
+The container runs one Uvicorn process. The immutable image contains application code and study
+protocols; the mutable SQLite ledger is mounted at `/app/data` from the Compose-managed
+`evidence-data` volume. Credentials are runtime environment variables and are not copied into the
+image.
 
 ## Source availability semantics
 

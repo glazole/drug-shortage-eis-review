@@ -4,16 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
 
-from .config import load_database_queries, load_study_config
-from .discovery import DiscoveryRunner
-from .sources import build_source_registry
-from .storage import SQLiteEvidenceStore
-
-
-def _run_id() -> str:
-    return datetime.now(timezone.utc).strftime("search_%Y%m%dT%H%M%SZ")
+from .service import describe_study, initialize_database, run_database_search
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,65 +29,20 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "validate-config":
-        study = load_study_config(args.study)
-        queries = load_database_queries(args.study)
-        print(
-            json.dumps(
-                {
-                    "study_id": study.study_id,
-                    "sources": {
-                        name: {"enabled": cfg.enabled, "required": cfg.required}
-                        for name, cfg in study.sources.items()
-                    },
-                    "query_variants": len(queries),
-                },
-                indent=2,
-                ensure_ascii=False,
-            )
-        )
+        print(json.dumps(describe_study(args.study), indent=2, ensure_ascii=False))
         return 0
 
-    store = SQLiteEvidenceStore(args.database)
-    store.initialize()
     if args.command == "init-db":
-        print(json.dumps(store.summary(), indent=2))
+        print(json.dumps(initialize_database(args.database), indent=2))
         return 0
 
-    study = load_study_config(args.study)
-    queries = load_database_queries(args.study)
-    registry = build_source_registry(study)
-    runner = DiscoveryRunner(registry, study.sources)
-    run_id = args.run_id or _run_id()
-    discovered, reports = runner.search(
-        run_id=run_id,
-        queries=queries,
+    result = run_database_search(
+        study_dir=args.study,
+        database_path=args.database,
         limit_per_query=args.limit_per_query,
+        run_id=args.run_id,
     )
-    unique_works, discoveries = store.ingest(discovered)
-    store.write_source_reports(reports)
-    print(
-        json.dumps(
-            {
-                "run_id": run_id,
-                "retrieved_records": len(discovered),
-                "unique_works_in_batch": unique_works,
-                "new_discovery_events": discoveries,
-                "source_statuses": [
-                    {
-                        "source": report.source_name,
-                        "query_id": report.query_id,
-                        "status": report.status.value,
-                        "count": report.retrieved_count,
-                        "message": report.message,
-                    }
-                    for report in reports
-                ],
-                "ledger": store.summary(),
-            },
-            indent=2,
-            ensure_ascii=False,
-        )
-    )
+    print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
 
 
