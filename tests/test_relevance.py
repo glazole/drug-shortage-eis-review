@@ -27,6 +27,41 @@ class RelevanceTests(unittest.TestCase):
         self.assertEqual(result['decision'], 'include')
         self.assertIn('MISSING_ABSTRACT', result['reason_codes'])
 
+    def test_data_fusion_shortage_candidate_advances_via_s1(self):
+        title = "Integrative cross-supply-chain and clinical data fusion for proactive mitigation and management of pharmaceutical shortages"
+        abstract = (
+            "Mixing cross-supply-chain data with information from patients can support "
+            "new ways to predict risks. Data fusion can dramatically improve how "
+            "pharmaceutical shortages are managed by giving real-time access to supply "
+            "chain operations. Stakeholders cooperate using shared information."
+        )
+        result = evaluate(title, abstract, S1, ['openalex'], self.rules)
+        self.assertEqual(result['decision'], 'include')
+        self.assertIn('data fusion', result['matched']['information'])
+        self.assertEqual(evaluate(title, abstract, S3, ['openalex'], self.rules)['decision'], 'include')
+
+    def test_essential_medicine_shortage_candidate_advances(self):
+        title = "Global Shortages of Essential Medicines: Public Health Challenges and Policy Solutions"
+        abstract = (
+            "The global shortage of essential medicines is a public health challenge. "
+            "Preventive strategies include early-warning systems. The framework integrates "
+            "governance, manufacturing diversification and data transparency."
+        )
+        for query in [S1, S2]:
+            result = evaluate(title, abstract, query, ['openalex'], self.rules)
+            self.assertEqual(result['decision'], 'include')
+            self.assertIn('shortages of essential medicines', result['matched']['shortage'])
+
+    def test_reverse_shortage_form_still_requires_information(self):
+        result = evaluate('Shortages of essential medicines', 'A study of manufacturing costs.', S1, ['crossref'], self.rules)
+        self.assertEqual(result['decision'], 'exclude')
+        self.assertEqual(result['reason_codes'], ['MISSING_INFORMATION_ANCHOR'])
+
+    def test_data_fusion_still_requires_pharmaceutical_shortage(self):
+        result = evaluate('Data fusion in photovoltaic monitoring', 'Shortages of essential equipment.', S1, ['crossref'], self.rules)
+        self.assertEqual(result['decision'], 'exclude')
+        self.assertEqual(result['reason_codes'], ['MISSING_SHORTAGE_ANCHOR'])
+
     def test_missing_abstract_does_not_exclude(self):
         result = evaluate('A pharmaceutical study', None, S1, ['crossref'], self.rules)
         self.assertEqual(result['decision'], 'review')
