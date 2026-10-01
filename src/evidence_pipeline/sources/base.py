@@ -104,6 +104,14 @@ class SourceAdapter(ABC):
     def backward(self, work_identifier: str, *, limit: int) -> list[WorkRecord]:
         raise UnsupportedCapabilityError(f"{self.name} does not support backward citation search")
 
+    def lookup_doi(self, doi: str) -> WorkRecord | None:
+        """Retrieve one exact DOI record for metadata enrichment, not discovery."""
+        raise UnsupportedCapabilityError(f"{self.name} does not support DOI lookup")
+
+    def doi_lookup_url(self, doi: str) -> str:
+        """Credential-free URL used for provenance."""
+        return ""
+
     def forward(self, work_identifier: str, *, limit: int) -> list[WorkRecord]:
         raise UnsupportedCapabilityError(f"{self.name} does not support forward citation search")
 

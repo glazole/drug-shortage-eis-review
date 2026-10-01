@@ -87,3 +87,6 @@ class SourceRunReport:
     message: str | None = None
     started_at: str = field(default_factory=utc_now_iso)
     completed_at: str = field(default_factory=utc_now_iso)
+    requested_limit: int | None = None
+    total_results: int | None = None
+    possibly_truncated: bool = False

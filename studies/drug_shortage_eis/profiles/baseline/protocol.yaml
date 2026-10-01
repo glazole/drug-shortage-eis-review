@@ -11,6 +11,11 @@ date_range:
   min_year: 2010
   max_year: 2026
 
+abstract_enrichment:
+  enabled: true
+  sources: [scopus, openalex, pubmed, crossref]
+  request_interval_seconds: 0.4
+
 sources:
   pubmed:
     enabled: true

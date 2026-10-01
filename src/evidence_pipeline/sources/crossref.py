@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 from ..models import WorkRecord
 from ..normalization import clean_markup, normalize_doi
@@ -46,6 +47,7 @@ class CrossrefAdapter(SourceAdapter):
         )
 
     def search(self, query: str, *, limit: int) -> list[WorkRecord]:
+        self.last_search_total = None
         records: list[WorkRecord] = []
         cursor = "*"
         rows = min(1000, max(1, limit))
@@ -68,6 +70,7 @@ class CrossrefAdapter(SourceAdapter):
                 },
             )
             message = data.get("message") or {}
+            self.last_search_total = message.get("total-results")
             items = message.get("items") or []
             records.extend(self._map_work(item) for item in items if item.get("title"))
             next_cursor = message.get("next-cursor")
@@ -75,3 +78,10 @@ class CrossrefAdapter(SourceAdapter):
                 break
             cursor = next_cursor
         return records[:limit]
+
+    def doi_lookup_url(self, doi: str) -> str:
+        return f"{self.base_url}/{quote(doi, safe='')}"
+
+    def lookup_doi(self, doi: str) -> WorkRecord | None:
+        data = self.get_json(self.doi_lookup_url(doi), params={"mailto": self.contact_email})
+        return self._map_work(data.get("message") or {})

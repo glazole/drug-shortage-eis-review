@@ -1,0 +1,81 @@
+{
+  "experiment": "Exact-DOI fallback for three Scopus-only CSV records without abstracts",
+  "input_file": "baseline_pilot_v2_screening.csv",
+  "sample_selection": "first three Scopus-only records with DOI and empty abstract in the uploaded CSV",
+  "tested_provider": "openalex",
+  "scopus_live_access_tested": false,
+  "results": [
+    {
+      "doi": "10.1016/j.eswa.2026.133239",
+      "abstract_characters": null,
+      "abstract_source": null,
+      "method": null
+    },
+    {
+      "doi": "10.1038/s41598-025-30413-7",
+      "abstract_characters": 2562,
+      "abstract_source": "openalex",
+      "method": "doi_lookup"
+    },
+    {
+      "doi": "10.1186/s12882-026-04950-w",
+      "abstract_characters": 2479,
+      "abstract_source": "openalex",
+      "method": "doi_lookup"
+    }
+  ],
+  "summary": {
+    "enabled": true,
+    "run_id": "public_doi_probe",
+    "enrichment_id": "abstracts_e6ac40f9421b4e3eaa63a087c5345c5b",
+    "missing_before": 3,
+    "attempted_works": 3,
+    "missing_after": 1,
+    "provider_statuses": {
+      "openalex": {
+        "no_abstract": 1,
+        "found": 2
+      }
+    },
+    "enriched": 2,
+    "without_doi": 0,
+    "unresolved": 1
+  },
+  "attempts": [
+    {
+      "doi": "10.1016/j.eswa.2026.133239",
+      "source_name": "openalex",
+      "status": "no_abstract",
+      "message": null
+    },
+    {
+      "doi": "10.1038/s41598-025-30413-7",
+      "source_name": "openalex",
+      "status": "found",
+      "message": null
+    },
+    {
+      "doi": "10.1186/s12882-026-04950-w",
+      "source_name": "openalex",
+      "status": "found",
+      "message": null
+    }
+  ],
+  "initial_adapter_probe": {
+    "enabled": true,
+    "run_id": "public_doi_probe",
+    "enrichment_id": "abstracts_984cf72c63d44832a5f297da719a9db1",
+    "missing_before": 3,
+    "attempted_works": 3,
+    "missing_after": 3,
+    "provider_statuses": {
+      "openalex": {
+        "failed": 1,
+        "skipped_unavailable": 2
+      }
+    },
+    "enriched": 0,
+    "without_doi": 0,
+    "unresolved": 3
+  }
+}

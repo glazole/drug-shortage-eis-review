@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 
 from ..models import DiscoveredWork, SourceRunReport, WorkRecord, utc_now_iso
-from ..normalization import candidate_work_id, normalize_doi, normalize_title
+from ..normalization import candidate_work_id, clean_markup, normalize_doi, normalize_title
 
 
 SCHEMA = """
@@ -96,6 +97,40 @@ CREATE TABLE IF NOT EXISTS automatic_relevance (
     assessed_at TEXT NOT NULL,
     PRIMARY KEY(run_id, work_id, query_id, rule_version)
 );
+
+CREATE TABLE IF NOT EXISTS work_abstracts (
+    abstract_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    work_id TEXT NOT NULL REFERENCES works(work_id),
+    source_name TEXT NOT NULL,
+    method TEXT NOT NULL,
+    source_url TEXT NOT NULL DEFAULT '',
+    abstract_text TEXT NOT NULL,
+    abstract_sha256 TEXT NOT NULL,
+    retrieved_at TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    UNIQUE(work_id, source_name, method, abstract_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS enrichment_runs (
+    enrichment_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES search_runs(run_id),
+    status TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS abstract_lookup_attempts (
+    attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    enrichment_id TEXT NOT NULL REFERENCES enrichment_runs(enrichment_id),
+    work_id TEXT NOT NULL REFERENCES works(work_id),
+    doi TEXT,
+    source_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    message TEXT,
+    attempted_at TEXT NOT NULL
+);
 """
 
 
@@ -113,6 +148,14 @@ class SQLiteEvidenceStore:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(source_runs)")}
+            for name, definition in {
+                "requested_limit": "INTEGER",
+                "total_results": "INTEGER",
+                "possibly_truncated": "INTEGER NOT NULL DEFAULT 0",
+            }.items():
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE source_runs ADD COLUMN {name} {definition}")
 
     def start_search_run(
         self,
@@ -177,6 +220,7 @@ class SQLiteEvidenceStore:
         return new if len(new) > len(old) else old
 
     def upsert_work(self, connection: sqlite3.Connection, record: WorkRecord) -> str:
+        record.abstract = clean_markup(record.abstract)
         existing = self._find_existing(connection, record)
         doi = normalize_doi(record.doi)
         now = utc_now_iso()
@@ -269,7 +313,23 @@ class SQLiteEvidenceStore:
                     ),
                 )
                 discovery_count += max(cursor.rowcount, 0)
+                if item.record.abstract:
+                    self.record_abstract(
+                        connection, work_id=work_id, abstract=item.record.abstract,
+                        source=item.event.source_name, method="search",
+                        source_url=item.record.url or "", run_id=item.event.run_id,
+                    )
         return len(work_ids), discovery_count
+
+    @staticmethod
+    def record_abstract(connection, *, work_id, abstract, source, method, source_url, run_id):
+        connection.execute("""
+            INSERT OR IGNORE INTO work_abstracts(
+                work_id, source_name, method, source_url, abstract_text,
+                abstract_sha256, retrieved_at, run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (work_id, source, method, source_url, abstract,
+              hashlib.sha256(abstract.encode()).hexdigest(), utc_now_iso(), run_id))
 
     def write_source_reports(self, reports: list[SourceRunReport]) -> None:
         with self.connect() as connection:
@@ -277,8 +337,8 @@ class SQLiteEvidenceStore:
                 """
                 INSERT INTO source_runs(
                     run_id, source_name, status, method, query_id, retrieved_count,
-                    message, started_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    message, started_at, completed_at, requested_limit, total_results, possibly_truncated
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -291,6 +351,9 @@ class SQLiteEvidenceStore:
                         report.message,
                         report.started_at,
                         report.completed_at,
+                        report.requested_limit,
+                        report.total_results,
+                        int(report.possibly_truncated),
                     )
                     for report in reports
                 ],

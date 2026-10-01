@@ -283,8 +283,9 @@ by subsequent searches. Evidence snapshots make that input explicit.
 
 These are draft lexical heuristics. Validate recall against known relevant papers
 and manually audit exclusions before using counts in the final review. Filtering
-candidates does not repair recall lost through broad ranked API searches; do not
-increase the pilot limit or claim a complete corpus on this basis alone.
+candidates does not repair recall lost through broad ranked API searches. Collect
+the corpus before manual screening, and inspect retrieval limits and exclusions
+before claiming completeness.
 
 ### Update the service and assess the existing pilot
 
@@ -374,3 +375,103 @@ PY
 
 This performs a small live API request. Automated tests use simulated responses;
 live entitlement verification must happen on the server with your credentials.
+
+## Collect a corpus, enrich abstracts, then screen manually
+
+New searches automatically fill missing abstracts by exact DOI in this order:
+Scopus Abstract Retrieval (`META_ABS`), OpenAlex, PubMed, Crossref. Providers must
+be enabled in the profile. Existing nonempty abstracts are retained. A lookup
+with a different DOI is rejected; there is no title-based abstract matching.
+Enrichment does not create discoveries or change the original search source.
+
+`work_abstracts` records the provider, method (`search` or `doi_lookup`), public
+URL, timestamp and text hash. `abstract_lookup_attempts` records missing texts,
+DOI mismatches and failures separately. After 401/403/429 or exhausted transport
+retries, that provider is skipped for the rest of this enrichment batch; later
+providers are still tried. Repeat the operation to retry unresolved works.
+Credentials and raw transport error messages are not written to this audit.
+Older abstracts whose provenance was not recorded are exported as
+`legacy_unknown`; their provider is not guessed from discovery sources.
+
+Update the existing branch and rebuild the service:
+
+```bash
+git switch fix/relevance-gate-scopus
+git pull --ff-only
+docker compose up -d --build
+```
+
+Check which Scopus views actually return an abstract with your credentials:
+
+```bash
+curl --fail-with-body -sS -X POST http://localhost:8000/v1/diagnostics/scopus-abstract \
+  -H 'Content-Type: application/json' \
+  -d '{"doi":"10.1038/s41598-025-30413-7"}'
+```
+
+The diagnostic compares STANDARD, COMPLETE (including effective fallback view)
+and META_ABS. It returns presence/length, not abstract text, and writes nothing
+to the ledger. Search access does not guarantee Abstract Retrieval access.
+
+Try enrichment on five missing Scopus works in the existing pilot:
+
+```bash
+curl --fail-with-body -sS -X POST http://localhost:8000/v1/enrichment/abstracts \
+  -H 'Content-Type: application/json' \
+  -d '{"run_id":"baseline_pilot_v2_20261001T092422Z","discovery_source":"scopus","max_works":5}'
+```
+
+Omit `max_works` to process all missing works; omit `discovery_source` to process
+all discovery sources. This updates current work metadata; previous automatic
+assessments and human decisions remain as recorded. Explicitly rerun
+`POST /v1/screening/automatic` if you want updated automatic assessments.
+
+Collect a new run and export every deduplicated work for manual screening:
+
+```bash
+mkdir -p artifacts/exports
+RUN_ID="baseline_corpus_$(date -u +%Y%m%dT%H%M%SZ)"
+curl --fail-with-body -sS -X POST http://localhost:8000/v1/search \
+  -H 'Content-Type: application/json' \
+  -d "{\"run_id\":\"$RUN_ID\",\"limit_per_query\":500,\"enrich_abstracts\":true}" \
+  -o "artifacts/exports/${RUN_ID}_search.json"
+curl --fail-with-body -sS "http://localhost:8000/v1/runs/$RUN_ID/summary" \
+  -o "artifacts/exports/${RUN_ID}_summary.json"
+curl --fail-with-body -sS "http://localhost:8000/v1/runs/$RUN_ID/corpus.csv" \
+  -o "artifacts/exports/${RUN_ID}.csv"
+```
+
+Search and enrichment are synchronous and may take several minutes. The example
+limit is 500 per source/query; supported limits are 1–5000. Inspect
+`total_results` and `possibly_truncated` for each source/query before interpreting
+the corpus as complete. Totals are provider-reported, not counts of eligible
+unique studies. Unknown totals are null. Legacy source reports have no totals.
+The run stores its actual queries, year range and retrieval limit.
+
+The UTF-8 CSV includes all works, even automatic exclusions, plus abstract
+provenance and separate discovery sources. Fill `manual_decision`,
+`manual_reason_code`, `screening_note`, `reviewer`, and `screened_at` yourself.
+Exporting does not import your edits back into SQLite. Each run's membership is
+fixed by its discoveries, but exported metadata reflects the latest merged work
+record. Deduplication uses the existing DOI/title/year rules; review uncertain
+matches manually. Abstract availability is not guaranteed for every DOI.
+
+Set `EVIDENCE_ENRICH_ABSTRACTS=false` to disable automatic enrichment, or send
+`"enrich_abstracts":false` for one search. Provider order and request pacing are
+configured under `abstract_enrichment` in `protocol.yaml`.
+
+CLI equivalents are `enrich-abstracts`, `export-corpus`, `run-summary`, and
+`probe-scopus` (see `evidence-search <command> --help`). Run CLI mutations while
+the API is idle; its in-process lock does not coordinate separate processes.
+
+Live validation on three Scopus-only pilot records found two abstracts in
+OpenAlex; the third DOI was found without an abstract. The saved experiment is
+[docs/abstract-enrichment-validation.json](docs/abstract-enrichment-validation.json).
+This small sample does not establish recovery rates for the whole corpus or
+verify your Scopus entitlement. Scopus access must be checked on your server.
+
+Provider documentation:
+- [Scopus Abstract Retrieval API](https://dev.elsevier.com/documentation/AbstractRetrievalAPI.wadl)
+- [OpenAlex work attributes](https://help.openalex.org/data/works/attributes/)
+- [Crossref REST API](https://github.com/CrossRef/rest-api-doc)
+- [PubMed search fields](https://pubmed.ncbi.nlm.nih.gov/help/)

@@ -9,11 +9,15 @@ from threading import Lock
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, status
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .config import IDENTIFIER_PATTERN, list_study_profiles, resolve_profile_path
 from .exceptions import ConfigurationError, EvidencePipelineError, SourceUnavailableError
-from .service import describe_study, initialize_database, run_database_search
+from .service import describe_study, enrich_existing_run, initialize_database, run_database_search
+from .corpus import export_corpus_csv, run_summary
+from .config import load_study_config
+from .diagnostics import probe_scopus
 from .relevance import load_rules, screen_run
 from .storage import SQLiteEvidenceStore
 
@@ -64,7 +68,8 @@ class SearchRequest(BaseModel):
         pattern=IDENTIFIER_PATTERN.pattern,
     )
     run_id: str | None = Field(default=None, min_length=1, max_length=128)
-    limit_per_query: int = Field(default=200, ge=1, le=1000)
+    limit_per_query: int = Field(default=200, ge=1, le=5000)
+    enrich_abstracts: bool | None = None
 
 
 class LedgerSummary(BaseModel):
@@ -80,6 +85,9 @@ class SourceStatusResult(BaseModel):
     status: str
     count: int
     message: str | None
+    requested_limit: int | None = None
+    total_results: int | None = None
+    possibly_truncated: bool = False
 
 
 class DateRangeResult(BaseModel):
@@ -100,12 +108,24 @@ class SearchResponse(BaseModel):
     source_statuses: list[SourceStatusResult]
     ledger: LedgerSummary
     automatic_relevance: dict[str, Any] = Field(default_factory=dict)
+    abstract_enrichment: dict[str, Any] = Field(default_factory=dict)
 
 
 class ScreeningRequest(BaseModel):
     study_id: str = Field(default_factory=_default_study_id, pattern=IDENTIFIER_PATTERN.pattern)
     profile_id: str = Field(default_factory=_default_profile_id, pattern=IDENTIFIER_PATTERN.pattern)
     run_id: str = Field(min_length=1, max_length=128)
+
+
+class EnrichmentRequest(ScreeningRequest):
+    max_works: int | None = Field(default=None, ge=1, le=50000)
+    discovery_source: str | None = Field(default=None, pattern=IDENTIFIER_PATTERN.pattern)
+
+
+class ScopusProbeRequest(BaseModel):
+    study_id: str = Field(default_factory=_default_study_id, pattern=IDENTIFIER_PATTERN.pattern)
+    profile_id: str = Field(default_factory=_default_profile_id, pattern=IDENTIFIER_PATTERN.pattern)
+    doi: str = Field(pattern=r'^10\.\d{4,9}/[^\s"<>]+$')
 
 
 @asynccontextmanager
@@ -199,6 +219,7 @@ def create_app() -> FastAPI:
                 database_path=_database_path(),
                 limit_per_query=request.limit_per_query,
                 run_id=request.run_id,
+                enrich_abstracts=request.enrich_abstracts,
             )
         except ConfigurationError as exc:
             raise HTTPException(
@@ -232,6 +253,52 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         finally:
             _search_lock.release()
+
+    @application.post("/v1/enrichment/abstracts", tags=["ledger"])
+    def enrich_abstracts(request: EnrichmentRequest) -> dict[str, Any]:
+        if not _search_lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="Another search or enrichment is running")
+        try:
+            return enrich_existing_run(
+                study_dir=_resolve_profile(request.study_id, request.profile_id),
+                database_path=_database_path(), run_id=request.run_id,
+                max_works=request.max_works, discovery_source=request.discovery_source,
+            )
+        except ConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        finally:
+            _search_lock.release()
+
+    @application.get("/v1/runs/{run_id}/summary", tags=["ledger"])
+    def corpus_summary(run_id: str) -> dict[str, Any]:
+        store = SQLiteEvidenceStore(_database_path())
+        try:
+            return run_summary(store, run_id)
+        except ConfigurationError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @application.post("/v1/diagnostics/scopus-abstract", tags=["service"])
+    def scopus_probe(request: ScopusProbeRequest) -> dict[str, Any]:
+        if not _search_lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="Another search or enrichment is running")
+        try:
+            study = load_study_config(_resolve_profile(request.study_id, request.profile_id))
+            return probe_scopus(study, request.doi)
+        except ConfigurationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        finally:
+            _search_lock.release()
+
+    @application.get("/v1/runs/{run_id}/corpus.csv", tags=["ledger"])
+    def corpus_export(run_id: str) -> Response:
+        store = SQLiteEvidenceStore(_database_path())
+        try:
+            csv_text = export_corpus_csv(store, run_id)
+        except ConfigurationError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        # Filename does not interpolate the user-controlled run ID into headers.
+        return Response(csv_text.encode("utf-8"), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="corpus.csv"'})
 
     return application
 

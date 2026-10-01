@@ -87,6 +87,40 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/v1/ledger/summary").json()["discoveries"], 1)
         self.assertEqual(self.client.post("/v1/screening/automatic", json={"run_id": "missing"}).status_code, 422)
 
+    def test_enrichment_export_and_summary_are_run_scoped(self):
+        import csv
+        import io
+        from evidence_pipeline.models import DiscoveryEvent, DiscoveryMethod, DiscoveredWork, WorkRecord
+        class Provider:
+            def doi_lookup_url(self, doi):
+                return "https://provider.example/" + doi
+            def lookup_doi(self, doi):
+                return WorkRecord(title="Drug shortages", doi=doi, abstract="Monitoring drug shortages.")
+        records = [DiscoveredWork(
+            WorkRecord(title="Drug shortages", doi="10.1234/test", year=2026),
+            DiscoveryEvent("corpus", "scopus", DiscoveryMethod.DATABASE, query_id="S1_SHORTAGE_INFORMATION"))]
+        config = {"enabled": True, "sources": ["openalex"], "request_interval_seconds": 0}
+        with patch("evidence_pipeline.service.DiscoveryRunner.search", return_value=(records, [])), \
+             patch("evidence_pipeline.service.build_source_registry", return_value={"openalex": Provider()}), \
+             patch("evidence_pipeline.service.load_enrichment_config", return_value=config):
+            response = self.client.post("/v1/search", json={"run_id": "corpus"})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["abstract_enrichment"]["enriched"], 1)
+            repeat = self.client.post("/v1/enrichment/abstracts", json={"run_id": "corpus"})
+            self.assertEqual(repeat.status_code, 200, repeat.text)
+            self.assertEqual(repeat.json()["attempted_works"], 0)
+        summary = self.client.get("/v1/runs/corpus/summary")
+        self.assertEqual(summary.status_code, 200, summary.text)
+        response = self.client.get("/v1/runs/corpus/corpus.csv")
+        self.assertEqual(response.status_code, 200, response.text)
+        rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["abstract_source"], "openalex")
+        self.assertEqual(rows[0]["discovery_sources"], "scopus")
+        self.assertEqual(rows[0]["manual_decision"], "")
+        self.assertEqual(self.client.get("/v1/runs/missing/corpus.csv").status_code, 404)
+        self.assertEqual(self.client.get("/v1/runs/missing/summary").status_code, 404)
+
     def test_unknown_study_returns_not_found(self) -> None:
         response = self.client.get("/v1/studies/missing")
 
