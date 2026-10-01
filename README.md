@@ -13,6 +13,19 @@ This is a research tool, not an automatic systematic-review generator. Automated
 normalization, and deduplication are kept separate from scientific title/abstract screening,
 full-text assessment, quality appraisal, and synthesis.
 
+## Current capabilities
+
+This branch provides database retrieval, normalization and deduplication, exact-DOI
+abstract enrichment with provenance, advisory automatic relevance checks, and
+whole-run CSV export for manual screening. API and package version: `0.2.0`;
+Python: `3.12+`; storage: SQLite.
+
+Citation and author-expansion adapters and runner methods exist, but the current
+CLI/API search executes database queries only. `snowballing` settings and seeds
+do not trigger an automatic iterative snowballing workflow. Human screening
+import, full-text assessment, quality appraisal, synthesis, recall validation
+and PRISMA report generation remain future work.
+
 ## Design principles
 
 1. Every database or API is an optional source adapter.
@@ -21,8 +34,9 @@ full-text assessment, quality appraisal, and synthesis.
    produce the same canonical `WorkRecord` and `DiscoveryEvent` objects.
 4. A disabled source is recorded as `disabled`; a transiently inaccessible optional source is
    recorded as `unavailable`; neither is silently treated as an empty result.
-5. If a source is marked `required: true`, its failure stops the run to prevent an incomplete
-   search from being mistaken for a complete one.
+5. A required database-search source aborts the run on failure. Optional-source
+   failures allow the run to complete; inspect source statuses before judging completeness.
+   Abstract lookup failures are audited and allow fallback even for a required search source.
 
 ## Semantic Scholar failure behaviour
 
@@ -46,10 +60,31 @@ and reads source credentials from the local `.env` file. The `.env` file is excl
 and the Docker build context.
 
 ```bash
-cp .env.example .env
+cp -n .env.example .env
+# Edit .env: set RESEARCH_CONTACT_EMAIL and source credentials/overrides.
 docker compose up --build -d
 docker compose ps
 ```
+
+Use `cp -n` only to create a missing `.env`; keep existing credentials when updating.
+The example `.env` enables Scopus as a **required search source**, with an empty
+Elsevier key. Set `ELSEVIER_API_KEY` before searching, or explicitly set
+`EVIDENCE_SOURCE_SCOPUS_ENABLED=false` and `EVIDENCE_SOURCE_SCOPUS_REQUIRED=false`.
+Service health checks the ledger, not access to scholarly APIs.
+
+The YAML baseline and `.env.example` differ:
+
+| Setting | Baseline YAML without overrides | Copied `.env.example` |
+|---|---|---|
+| Year range | 2010–2026 | 2021–2026 |
+| Required database sources | PubMed | PubMed, OpenAlex, Crossref, Scopus |
+| Scopus | Disabled, optional | Enabled, required |
+| ScienceDirect | Disabled, optional | Enabled, required; no baseline database query |
+| Semantic Scholar | Disabled, optional | Disabled, optional |
+
+There are three English query groups and 15 source/query variants in the baseline
+(PubMed, OpenAlex, Crossref, Scopus, Semantic Scholar). ScienceDirect has an
+adapter but no baseline database query, so enabling it does not add search results.
 
 After the health check becomes healthy:
 
@@ -91,8 +126,10 @@ curl --fail-with-body -sS \
   | tee "artifacts/runs/${RUN_ID}.json"
 ```
 
-The request is synchronous: `curl` waits until all configured source queries complete or a required
-source aborts the run. Watch progress from another terminal:
+The request is synchronous: `curl` waits for database retrieval, persistence,
+abstract enrichment (when enabled), and automatic relevance assessment, or for
+a required-source failure. Container logs are available from another terminal;
+there is no dedicated progress/job-status API:
 
 ```bash
 docker compose logs -f evidence-api
@@ -104,14 +141,17 @@ After completion, inspect the ledger counters:
 curl http://localhost:8000/v1/ledger/summary
 ```
 
-For a full run, use another unique ID such as `baseline_full_<timestamp>` and increase
-`limit_per_query`, for example to `200`.
+For a larger corpus, use another unique ID such as `baseline_corpus_<timestamp>`
+and increase `limit_per_query` (default 200; allowed 1–5000). A larger limit does
+not establish search completeness. Inspect totals, truncation and source failures.
+See [corpus collection and export](#collect-a-corpus-enrich-abstracts-then-screen-manually).
 
 ### How often to run the same profile
 
 Technically, the same profile and settings can be run any number of times, but:
 
-- only one search may run at a time; a concurrent request receives HTTP `409`;
+- search, automatic assessment, enrichment and Scopus diagnostics share one
+  in-process lock; a concurrent operation receives HTTP `409`;
 - every run must have a unique `run_id`;
 - an existing `run_id`, including one belonging to a failed run, must not be reused;
 - external scholarly APIs have their own quotas and rate limits;
@@ -124,11 +164,16 @@ A practical sequence is:
 1. `baseline_pilot_01`: retrieve 10–20 records per query and assess query behaviour.
 2. If the protocol changes, save it as another profile such as `pilot_v2` instead of overwriting
    `baseline`.
-3. `baseline_full_01`: execute the frozen full search.
+3. `baseline_corpus_01`: retrieve the frozen profile, inspect source statuses and
+   truncation, export the corpus, then perform manual screening.
 4. Run again only to recover an unavailable source, evaluate a deliberately changed profile, or
    update the search before publication.
 
-Pilot and final runs may share one SQLite ledger. Their provenance remains distinguishable by
+If a required source aborts database retrieval, the run is marked `failed`; the
+current service does not persist the partial results/reports accumulated before
+that abort. Completed runs with optional failures still need inspection.
+
+Pilot and corpus runs may share one SQLite ledger. Their provenance remains distinguishable by
 `run_id`, while duplicate works remain canonicalized in `works`.
 
 Operational commands:
@@ -151,10 +196,11 @@ override it only for the current deployment:
 EVIDENCE_DEFAULT_STUDY_ID=drug_shortage_eis
 EVIDENCE_DEFAULT_PROFILE_ID=baseline
 
-EVIDENCE_MIN_YEAR=2015
+EVIDENCE_MIN_YEAR=2021
 EVIDENCE_MAX_YEAR=2026
 EVIDENCE_SEARCH_LANGUAGE=en
 EVIDENCE_INCLUDE_ABSTRACTS=true
+EVIDENCE_ENRICH_ABSTRACTS=true
 
 EVIDENCE_SOURCE_PUBMED_ENABLED=true
 EVIDENCE_SOURCE_OPENALEX_ENABLED=true
@@ -173,9 +219,12 @@ After changing `.env`, recreate the service so Compose passes the new values:
 docker compose up -d
 ```
 
-The API response includes `env_overrides`. Every search also writes the full effective settings and
-completion status to the ledger's `search_runs` table, so a pilot run cannot silently hide which
-profile values were changed at runtime.
+Study/profile responses include `env_overrides`, effective settings, relevance rules
+and enrichment configuration. Search responses include the effective date range,
+language, abstract setting and operation summaries. `search_runs` stores queries,
+limits, effective source flags/search views, relevance rules, enrichment configuration
+and completion status. Its `env_overrides` list tracks the overrides handled by
+the study loader; it is not a complete list of every deployment variable.
 
 ### Saved research profiles
 
@@ -204,16 +253,25 @@ contract.
 be translated mechanically across languages or bibliographic databases.
 
 `search.include_abstracts` controls whether retrieved abstracts are retained in the evidence
-ledger. When it is false, abstracts are discarded before persistence; adapters may still receive
-abstract metadata when an upstream API does not offer a field-selection option.
+ledger for incoming results. When it is false, incoming abstracts are discarded
+before persistence and search-time enrichment is skipped; existing canonical
+abstracts from previous runs are not erased. Adapters may still receive abstract
+metadata when an upstream API does not offer a field-selection option.
 
 ## Local CLI quick start
+
+Run from the repository root with Python 3.12 or newer. Unlike Compose, the CLI
+does **not** automatically load `.env`. Export its values in your shell:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
-cp .env.example .env
+cp -n .env.example .env
+# Edit .env before loading it. This is a trusted shell configuration.
+set -a
+source .env
+set +a
 evidence-search validate-config \
   --study studies/drug_shortage_eis/profiles/baseline
 evidence-search init-db --database data/review.sqlite3
@@ -229,34 +287,37 @@ API keys are read only from environment variables. They are never serialized int
 
 | Method | Path | Purpose |
 |---|---|---|
+| `GET` | `/` | Return service and documentation links |
 | `GET` | `/health` | Check the service and initialize/read the ledger |
 | `GET` | `/v1/studies` | List saved studies and profiles |
 | `GET` | `/v1/studies/{study_id}` | Read the selected/default profile |
 | `GET` | `/v1/studies/{study_id}/profiles/{profile_id}` | Read a specific saved profile |
 | `GET` | `/v1/ledger/summary` | Return work, discovery, source-run, and search-run counts |
-| `POST` | `/v1/search` | Run the configured database-source retrieval |
+| `POST` | `/v1/search` | Retrieve, deduplicate, optionally enrich, then assess relevance |
+| `POST` | `/v1/screening/automatic` | Assess an existing run using current rules/metadata |
+| `POST` | `/v1/enrichment/abstracts` | Fill missing abstracts in an existing run |
+| `POST` | `/v1/diagnostics/scopus-abstract` | Compare Scopus abstract access without ledger writes |
+| `GET` | `/v1/runs/{run_id}/summary` | Return run status, corpus/abstract counts and source reports |
+| `GET` | `/v1/runs/{run_id}/corpus.csv` | Download all run works with screening columns |
 
 Profile responses include the effective date range, language, abstract setting, research
 questions, concepts, eligibility criteria, sources, and applied environment overrides. They report
 whether an API key is configured but never return the key itself. Semantic Scholar remains
 disabled in the baseline profile unless explicitly enabled in the profile or `.env`.
 
-## Current milestone
+## Verification
 
-The first milestone provides:
+Run deterministic tests without live provider credentials:
 
-- canonical work and discovery models;
-- configurable OpenAlex, PubMed, Crossref, Scopus, ScienceDirect, and Semantic Scholar adapters;
-- graceful degradation for optional sources;
-- backward/forward citation and author-expansion capabilities where the source supports them;
-- a SQLite evidence ledger preserving multiple discovery paths;
-- a FastAPI delivery layer with Docker Compose startup and persistent ledger storage;
-- a draft study protocol and source-specific pilot queries;
-- tests for the HTTP API, service layer, source failure handling, DOI normalization, and
-  provenance preservation.
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -q
+git diff --check
+```
 
-The next milestone will add reviewer-oriented screening import/export, explicit exclusion-reason
-codes, query recall tests against the legacy thesis corpus, and PRISMA 2020/PRISMA-S reporting.
+The current suite contains 63 tests covering API operations, DOI lookup/fallback,
+provenance, deduplication, run isolation, preservation of manual decisions,
+legacy schema migration, source failures, pagination and Scopus diagnostics.
+Live provider availability and access are separate checks.
 
 ## Automatic relevance checks (pilot)
 
@@ -289,15 +350,18 @@ before claiming completeness.
 
 ### Update the service and assess the existing pilot
 
-After merging the changes:
+Update this feature branch directly (merging is not required to use it):
 
 ```bash
 cd ~/drug-shortage-eis-review
-git pull --ff-only
+git fetch origin
+git switch fix/relevance-gate-scopus
+git pull --ff-only origin fix/relevance-gate-scopus
 docker compose up -d --build evidence-api
 ```
 
-The existing `evidence-data` volume is reused; schema initialization adds a table.
+The existing `evidence-data` volume is reused. Idempotent schema initialization
+adds relevance/enrichment tables and retrieval-count columns to `source_runs`.
 Use the exact `run_id` in your pilot JSON (or list runs with the command below):
 
 ```bash
@@ -312,7 +376,7 @@ PY
 ```bash
 curl --fail-with-body -sS -X POST http://localhost:8000/v1/screening/automatic \
   -H 'Content-Type: application/json' \
-  -d '{"study_id":"drug_shortage_eis","profile_id":"baseline","run_id":"REPLACE_WITH_YOUR_PILOT_RUN_ID"}' | jq
+  -d '{"study_id":"drug_shortage_eis","profile_id":"baseline","run_id":"REPLACE_WITH_YOUR_PILOT_RUN_ID"}'
 ```
 
 Inspect decisions and reasons without rerunning searches:
@@ -355,6 +419,7 @@ network or the appropriate token. The adapter reports actionable diagnostics for
 ScienceDirect remains a separate adapter and access entitlement.
 
 Official references:
+
 - [Scopus Search API: views, institutional token, date](https://dev.elsevier.com/documentation/ScopusSearchAPI.wadl)
 - [Elsevier authentication](https://dev.elsevier.com/tecdoc_api_authentication.html)
 
@@ -380,7 +445,11 @@ live entitlement verification must happen on the server with your credentials.
 
 New searches automatically fill missing abstracts by exact DOI in this order:
 Scopus Abstract Retrieval (`META_ABS`), OpenAlex, PubMed, Crossref. Providers must
-be enabled in the profile. Existing nonempty abstracts are retained. A lookup
+be listed under `abstract_enrichment.sources` and have a configured adapter.
+**Current implementation:** source `enabled`/`required` flags govern discovery,
+not DOI enrichment. A source disabled for search may still receive DOI lookups.
+Remove it from `abstract_enrichment.sources` to prevent those enrichment calls.
+Existing nonempty abstracts are retained by the enrichment operation. A lookup
 with a different DOI is rejected; there is no title-based abstract matching.
 Enrichment does not create discoveries or change the original search source.
 
@@ -396,8 +465,10 @@ Older abstracts whose provenance was not recorded are exported as
 Update the existing branch and rebuild the service:
 
 ```bash
+cd ~/drug-shortage-eis-review
+git fetch origin
 git switch fix/relevance-gate-scopus
-git pull --ff-only
+git pull --ff-only origin fix/relevance-gate-scopus
 docker compose up -d --build
 ```
 
@@ -412,6 +483,9 @@ curl --fail-with-body -sS -X POST http://localhost:8000/v1/diagnostics/scopus-ab
 The diagnostic compares STANDARD, COMPLETE (including effective fallback view)
 and META_ABS. It returns presence/length, not abstract text, and writes nothing
 to the ledger. Search access does not guarantee Abstract Retrieval access.
+A successful STANDARD lookup without an abstract followed by 401 in COMPLETE/META_ABS is reported as
+such; 401 does not trigger the COMPLETE→STANDARD fallback. The diagnostic tests
+Scopus explicitly even if it is disabled for discovery.
 
 Try enrichment on five missing Scopus works in the existing pilot:
 
@@ -445,7 +519,9 @@ Search and enrichment are synchronous and may take several minutes. The example
 limit is 500 per source/query; supported limits are 1–5000. Inspect
 `total_results` and `possibly_truncated` for each source/query before interpreting
 the corpus as complete. Totals are provider-reported, not counts of eligible
-unique studies. Unknown totals are null. Legacy source reports have no totals.
+unique studies. Unknown totals are null. `possibly_truncated=false` is not proof
+of completeness: it only describes the detected per-query retrieval cap.
+Legacy source reports have no totals.
 The run stores its actual queries, year range and retrieval limit.
 
 The UTF-8 CSV includes all works, even automatic exclusions, plus abstract
@@ -453,16 +529,45 @@ provenance and separate discovery sources. Fill `manual_decision`,
 `manual_reason_code`, `screening_note`, `reviewer`, and `screened_at` yourself.
 Exporting does not import your edits back into SQLite. Each run's membership is
 fixed by its discoveries, but exported metadata reflects the latest merged work
-record. Deduplication uses the existing DOI/title/year rules; review uncertain
-matches manually. Abstract availability is not guaranteed for every DOI.
+record; later discovery ingestion may select a longer abstract. Deduplication
+uses the existing DOI/title/year rules; review uncertain matches manually. Abstract availability is not guaranteed for every DOI.
 
 Set `EVIDENCE_ENRICH_ABSTRACTS=false` to disable automatic enrichment, or send
 `"enrich_abstracts":false` for one search. Provider order and request pacing are
-configured under `abstract_enrichment` in `protocol.yaml`.
+configured under `abstract_enrichment` in `protocol.yaml`. An explicit search
+`enrich_abstracts` value overrides that enabled setting (including the environment
+override), but `include_abstracts=false` always prevents search-time enrichment.
+Explicit existing-run enrichment requires `include_abstracts=true` and honors
+the current enrichment enabled setting.
+
+Enrichment responses report missing counts for the selected run/source subset.
+`max_works` bounds attempted works (API range 1–50000), not the initial missing
+count. `missing_after` includes unattempted works; `unresolved` counts attempted
+works that remained without text. `discovery_source` filters original discovery
+paths, not the providers queried for abstracts.
 
 CLI equivalents are `enrich-abstracts`, `export-corpus`, `run-summary`, and
 `probe-scopus` (see `evidence-search <command> --help`). Run CLI mutations while
 the API is idle; its in-process lock does not coordinate separate processes.
+
+For the local CLI database (not the separate Compose volume):
+
+```bash
+RUN_ID="REPLACE_WITH_AN_EXISTING_RUN_ID"
+evidence-search enrich-abstracts \
+  --study studies/drug_shortage_eis/profiles/baseline \
+  --database data/review.sqlite3 --run-id "$RUN_ID" \
+  --discovery-source scopus --max-works 5
+evidence-search run-summary \
+  --database data/review.sqlite3 --run-id "$RUN_ID"
+evidence-search export-corpus \
+  --database data/review.sqlite3 --run-id "$RUN_ID" \
+  --output "artifacts/exports/${RUN_ID}.csv"
+evidence-search probe-scopus \
+  --study studies/drug_shortage_eis/profiles/baseline \
+  --doi '10.1038/s41598-025-30413-7'
+```
+
 
 Live validation on three Scopus-only pilot records found two abstracts in
 OpenAlex; the third DOI was found without an abstract. The saved experiment is
@@ -471,6 +576,7 @@ This small sample does not establish recovery rates for the whole corpus or
 verify your Scopus entitlement. Scopus access must be checked on your server.
 
 Provider documentation:
+
 - [Scopus Abstract Retrieval API](https://dev.elsevier.com/documentation/AbstractRetrievalAPI.wadl)
 - [OpenAlex work attributes](https://help.openalex.org/data/works/attributes/)
 - [Crossref REST API](https://github.com/CrossRef/rest-api-doc)
